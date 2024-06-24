@@ -38,7 +38,7 @@ import { VCSInstance } from '../../sync/vcs/insomnia-sync';
 import { migrateProjectsIntoOrganization, shouldMigrateProjectUnderOrganization } from '../../sync/vcs/migrate-projects-into-organization';
 import { insomniaFetch } from '../../ui/insomniaFetch';
 import { invariant } from '../../utils/invariant';
-import { AsyncTask } from '../../utils/router';
+import { AsyncTask, findBestRoute } from '../../utils/router';
 import { SegmentEvent } from '../analytics';
 import { getLoginUrl } from '../auth-session-provider';
 import { Avatar } from '../components/avatar';
@@ -680,40 +680,50 @@ const OrganizationRoute = () => {
           ) : null}
           {isOrganizationSidebarOpen && <div className={`[grid-area:Navbar] overflow-hidden ${isOrganizationSidebarOpen ? '' : 'hidden'}`}>
             <nav className="flex flex-col items-center place-content-stretch gap-[--padding-md] w-full h-full overflow-y-auto py-[--padding-md]">
-              {organizations.map(organization => (
-                <TooltipTrigger key={organization.id}>
-                  <Link className="outline-none">
-                    <NavLink
-                      className={({ isActive, isPending }) =>
-                        `select-none text-[--color-font-surprise] hover:no-underline transition-all duration-150 bg-gradient-to-br box-border from-[#4000BF] to-[#154B62] font-bold outline-[3px] rounded-md w-[28px] h-[28px] flex items-center justify-center active:outline overflow-hidden outline-offset-[3px] outline ${isActive
+              {organizations.map(organization => {
+                const isActive = organization.id === organizationId;
+                return (
+                  <TooltipTrigger key={organization.id}>
+                    <Link className="outline-none">
+                      <div
+                        className={`select-none text-[--color-font-surprise] hover:no-underline transition-all duration-150 bg-gradient-to-br box-border from-[#4000BF] to-[#154B62] font-bold outline-[3px] rounded-md w-[28px] h-[28px] flex items-center justify-center active:outline overflow-hidden outline-offset-[3px] outline ${isActive
                           ? 'outline-[--color-font]'
                           : 'outline-transparent focus:outline-[--hl-md] hover:outline-[--hl-md]'
-                        } ${isPending ? 'animate-pulse' : ''}`
-                      }
-                      to={`/organization/${organization.id}`}
+                          }`}
+                        onClick={async () => {
+                          const bestRoute = await findBestRoute(organization.id);
+                          navigate(bestRoute, {
+                            state: {
+                              asyncTaskList: [
+                                AsyncTask.SyncProjects,
+                              ],
+                            },
+                          });
+                        }}
+                      >
+                        {isPersonalOrganization(organization) && isOwnerOfOrganization({
+                          organization,
+                          accountId: userSession.accountId || '',
+                        }) ? (
+                          <Icon icon="home" />
+                        ) : (
+                          <OrganizationAvatar
+                            alt={organization.display_name}
+                            src={organization.branding?.logo_url || ''}
+                          />
+                        )}
+                      </div>
+                    </Link>
+                    <Tooltip
+                      placement="right"
+                      offset={8}
+                      className="border select-none text-sm min-w-max border-solid border-[--hl-sm] shadow-lg bg-[--color-bg] text-[--color-font] px-4 py-2 rounded-md overflow-y-auto max-h-[85vh] focus:outline-none"
                     >
-                      {isPersonalOrganization(organization) && isOwnerOfOrganization({
-                        organization,
-                        accountId: userSession.accountId || '',
-                      }) ? (
-                        <Icon icon="home" />
-                      ) : (
-                        <OrganizationAvatar
-                          alt={organization.display_name}
-                          src={organization.branding?.logo_url || ''}
-                        />
-                      )}
-                    </NavLink>
-                  </Link>
-                  <Tooltip
-                    placement="right"
-                    offset={8}
-                    className="border select-none text-sm min-w-max border-solid border-[--hl-sm] shadow-lg bg-[--color-bg] text-[--color-font] px-4 py-2 rounded-md overflow-y-auto max-h-[85vh] focus:outline-none"
-                  >
-                    <span>{organization.display_name}</span>
-                  </Tooltip>
-                </TooltipTrigger>
-              ))}
+                      <span>{organization.display_name}</span>
+                    </Tooltip>
+                  </TooltipTrigger>
+                );
+              })}
               <MenuTrigger>
                 <Button className="select-none text-[--color-font] hover:no-underline transition-all duration-150 box-border p-[--padding-sm] font-bold outline-none rounded-md w-[28px] h-[28px] flex items-center justify-center overflow-hidden">
                   <Icon icon="plus" />
