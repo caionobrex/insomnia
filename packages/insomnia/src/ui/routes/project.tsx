@@ -1,5 +1,5 @@
 import { IconName } from '@fortawesome/fontawesome-svg-core';
-import React, { FC, Fragment, useEffect, useState } from 'react';
+import React, { FC, Fragment, useEffect, useMemo, useState } from 'react';
 import {
   Button,
   Dialog,
@@ -8,6 +8,7 @@ import {
   Heading,
   Input,
   Label,
+  Link,
   ListBox,
   ListBoxItem,
   Menu,
@@ -22,10 +23,13 @@ import {
   Select,
   SelectValue,
   TextField,
+  Tooltip,
+  TooltipTrigger,
 } from 'react-aria-components';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import {
   ActionFunction,
+  defer,
   LoaderFunction,
   redirect,
   useFetcher,
@@ -33,6 +37,7 @@ import {
   useLoaderData,
   useNavigate,
   useParams,
+  useRouteLoaderData,
 } from 'react-router-dom';
 import { useLocalStorage } from 'react-use';
 
@@ -81,7 +86,8 @@ import { MockServerSettingsModal } from '../components/modals/mock-server-settin
 import { EmptyStatePane } from '../components/panes/project-empty-state-pane';
 import { TimeFromNow } from '../components/time-from-now';
 import { useInsomniaEventStreamContext } from '../context/app/insomnia-event-stream-context';
-import { OrganizationFeatureLoaderData, useOrganizationLoaderData } from './organization';
+import { useLoaderDeferData } from '../hooks/use-loader-defer-data';
+import { OrganizationFeatureLoaderData, OrganizationLoaderData, useOrganizationLoaderData } from './organization';
 import { useRootLoaderData } from './root';
 
 interface TeamProject {
@@ -91,11 +97,11 @@ interface TeamProject {
 
 async function getAllTeamProjects(organizationId: string) {
   const { id: sessionId } = await userSession.getOrCreate();
-  console.log('Fetching projects for team', organizationId);
   if (!sessionId) {
     return [];
   }
 
+  console.log('[project] Fetching', organizationId);
   const response = await insomniaFetch<{
     data: {
       id: string;
@@ -110,11 +116,12 @@ async function getAllTeamProjects(organizationId: string) {
   return response.data as TeamProject[];
 }
 
-export const scopeToLabelMap: Record<WorkspaceScope | 'unsynced', 'Document' | 'Collection' | 'Mock Server' | 'Unsynced'> = {
+export const scopeToLabelMap: Record<WorkspaceScope | 'unsynced', 'Document' | 'Collection' | 'Mock Server' | 'Unsynced' | 'Environment'> = {
   design: 'Document',
   collection: 'Collection',
   'mock-server': 'Mock Server',
   unsynced: 'Unsynced',
+  environment: 'Environment',
 };
 
 export const scopeToIconMap: Record<string, IconName> = {
@@ -122,6 +129,7 @@ export const scopeToIconMap: Record<string, IconName> = {
   collection: 'bars',
   'mock-server': 'server',
   unsynced: 'cloud-download',
+  environment: 'code',
 };
 
 export const scopeToBgColorMap: Record<string, string> = {
@@ -129,6 +137,7 @@ export const scopeToBgColorMap: Record<string, string> = {
   collection: 'bg-[--color-surprise]',
   'mock-server': 'bg-[--color-warning]',
   unsynced: 'bg-[--hl-md]',
+  environment: 'bg-[--color-font]',
 };
 
 export const scopeToTextColorMap: Record<string, string> = {
@@ -136,6 +145,7 @@ export const scopeToTextColorMap: Record<string, string> = {
   collection: 'text-[--color-font-surprise]',
   'mock-server': 'text-[--color-font-warning]',
   unsynced: 'text-[--color-font]',
+  environment: 'text-[--color-bg]',
 };
 
 async function syncTeamProjects({
@@ -231,7 +241,7 @@ export const indexLoader: LoaderFunction = async ({ params }) => {
   try {
     await syncProjects(organizationId);
   } catch (err) {
-    console.log('Could not fetch remote projects.');
+    console.log('[project] Could not fetch remote projects.');
   }
   const bestRoute = await findBestRoute(organizationId);
   return redirect(bestRoute);
@@ -242,7 +252,7 @@ export interface InsomniaFile {
   name: string;
   remoteId?: string;
   scope: WorkspaceScope | 'unsynced';
-  label: 'Document' | 'Collection' | 'Mock Server' | 'Unsynced';
+  label: 'Document' | 'Collection' | 'Mock Server' | 'Unsynced' | 'Environment';
   created: number;
   lastModifiedTimestamp: number;
   branch?: string;
@@ -259,21 +269,17 @@ export interface ProjectIdLoaderData {
 }
 
 export interface ProjectLoaderData {
-  files: InsomniaFile[];
+  localFiles: InsomniaFile[];
   allFilesCount: number;
   documentsCount: number;
+  environmentsCount: number;
   collectionsCount: number;
   mockServersCount: number;
   projectsCount: number;
   activeProject?: Project;
   projects: Project[];
-  learningFeature: {
-    active: boolean;
-    title: string;
-    message: string;
-    cta: string;
-    url: string;
-  };
+  learningFeaturePromise?: Promise<LearningFeature>;
+  remoteFilesPromise?: Promise<InsomniaFile[]>;
 }
 
 async function getAllLocalFiles({
@@ -488,7 +494,7 @@ const getLearningFeature = async (fallbackLearningFeature: LearningFeature) => {
       });
       window.localStorage.setItem('learning-feature-last-fetch', Date.now().toString());
     } catch (err) {
-      console.log('Could not fetch learning feature data.');
+      console.log('[project] Could not fetch learning feature data.');
     }
   }
   return learningFeature;
@@ -496,7 +502,7 @@ const getLearningFeature = async (fallbackLearningFeature: LearningFeature) => {
 
 export const loader: LoaderFunction = async ({
   params,
-}): Promise<ProjectLoaderData> => {
+}) => {
   console.log('project id index loader');
   const { organizationId, projectId } = params;
   invariant(organizationId, 'Organization ID is required');
@@ -510,15 +516,15 @@ export const loader: LoaderFunction = async ({
   };
   if (!projectId) {
     return {
-      files: [],
+      localFiles: [],
       allFilesCount: 0,
       documentsCount: 0,
+      environmentsCount: 0,
       collectionsCount: 0,
       mockServersCount: 0,
       projectsCount: 0,
       activeProject: undefined,
       projects: [],
-      learningFeature: fallbackLearningFeature,
     };
   }
 
@@ -532,55 +538,67 @@ export const loader: LoaderFunction = async ({
   const project = await models.project.getById(projectId);
   invariant(project, `Project was not found ${projectId}`);
 
-  const [localFiles, remoteFiles, organizationProjects = [], learningFeature] = await Promise.all([
+  const [localFiles, organizationProjects = []] = await Promise.all([
     getAllLocalFiles({ projectId }),
-    getAllRemoteFiles({ projectId, organizationId }),
     database.find<Project>(models.project.type, {
       parentId: organizationId,
     }),
-    getLearningFeature(fallbackLearningFeature),
   ]);
 
-  const files = [...localFiles, ...remoteFiles];
+  const remoteFilesPromise = getAllRemoteFiles({ projectId, organizationId });
+  const learningFeaturePromise = getLearningFeature(fallbackLearningFeature);
 
   const projects = sortProjects(organizationProjects);
 
-  return {
-    files,
-    learningFeature,
+  return defer({
+    localFiles,
+    learningFeaturePromise,
+    remoteFilesPromise,
     projects,
     projectsCount: organizationProjects.length,
     activeProject: project,
-    allFilesCount: files.length,
-    documentsCount: files.filter(
+    allFilesCount: localFiles.length,
+    environmentsCount: localFiles.filter(
+      file => file.scope === 'environment'
+    ).length,
+    documentsCount: localFiles.filter(
       file => file.scope === 'design'
     ).length,
-    collectionsCount: files.filter(
+    collectionsCount: localFiles.filter(
       file => file.scope === 'collection'
     ).length,
-    mockServersCount: files.filter(
+    mockServersCount: localFiles.filter(
       file => file.scope === 'mock-server'
     ).length,
-  };
+  });
 };
 
 const ProjectRoute: FC = () => {
   const {
-    files,
+    localFiles,
     activeProject,
     projects,
     allFilesCount,
+    environmentsCount,
     collectionsCount,
     mockServersCount,
     documentsCount,
     projectsCount,
-    learningFeature,
+    learningFeaturePromise,
+    remoteFilesPromise,
   } = useLoaderData() as ProjectLoaderData;
   const [isLearningFeatureDismissed, setIsLearningFeatureDismissed] = useLocalStorage('learning-feature-dismissed', '');
   const { organizationId, projectId } = useParams() as {
     organizationId: string;
     projectId: string;
   };
+  const [learningFeature] = useLoaderDeferData<LearningFeature>(learningFeaturePromise);
+  const [remoteFiles] = useLoaderDeferData<InsomniaFile[]>(remoteFilesPromise);
+
+  const finalFiles = useMemo(() => {
+    console.log(remoteFiles, 'remoteFiles');
+    return remoteFiles ? [...localFiles, ...remoteFiles] : localFiles;
+  }, [localFiles, remoteFiles]);
 
   const { userSession } = useRootLoaderData();
   const pullFileFetcher = useFetcher();
@@ -597,6 +615,7 @@ const ProjectRoute: FC = () => {
     }
   }, [organizationId, permissionsFetcher]);
 
+  const { currentPlan } = useRouteLoaderData('/organization') as OrganizationLoaderData;
   const { features, billing, storage } = permissionsFetcher.data || {
     features: {
       gitSync: { enabled: false, reason: 'Insomnia API unreachable' },
@@ -617,7 +636,7 @@ const ProjectRoute: FC = () => {
   const isUserOwner = organization && userSession.accountId && isOwnerOfOrganization({ organization, accountId: userSession.accountId });
   const isPersonalOrg = organization && isPersonalOrganization(organization);
 
-  const filteredFiles = files
+  const filteredFiles = finalFiles
     .filter(w => (workspaceListScope !== 'all' ? w.scope === workspaceListScope : true))
     .filter(workspace =>
       workspaceListFilter
@@ -729,18 +748,44 @@ const ProjectRoute: FC = () => {
       },
     });
   };
-
+  const isEnterprise = currentPlan?.type.includes('enterprise');
+  const isCloudProjectOrEnterprisePlan = activeProject?.remoteId || isEnterprise;
+  const canCreateMockServer = activeProject?._id && isCloudProjectOrEnterprisePlan;
   const createNewMockServer = () => {
-    activeProject?._id &&
-    activeProject.remoteId
+    canCreateMockServer
       ? setIsMockServerSettingsModalOpen(true)
       : showModal(AlertModal, {
         title: 'Change Project',
-        message: 'Mock feature is only supported for Cloud projects.',
+        message: 'Mock feature is only supported for Cloud projects and Enterprise local projects.',
     });
   };
 
-  const createNewProjectFetcher = useFetcher();
+  const createNewGlobalEnvironment = () => {
+    activeProject?._id &&
+      showPrompt({
+        title: 'Create New Environment',
+        submitName: 'Create',
+        placeholder: 'New environment',
+        defaultValue: 'New environment',
+        selectText: true,
+        onComplete: async (name: string) => {
+          fetcher.submit(
+            {
+              name,
+              scope: 'environment',
+            },
+            {
+              action: `/organization/${organizationId}/project/${activeProject._id}/workspace/new`,
+              method: 'post',
+            }
+          );
+        },
+      });
+  };
+
+  const createNewProjectFetcher = useFetcher({
+    key: `${organizationId}-create-new-project`,
+  });
 
   useEffect(() => {
     if (createNewProjectFetcher.data && createNewProjectFetcher.data.error && createNewProjectFetcher.state === 'idle') {
@@ -823,10 +868,16 @@ const ProjectRoute: FC = () => {
       action: createNewDocument,
     },
     {
-        id: 'new-mock-server',
-        name: 'Mock Server',
-        icon: 'server',
+      id: 'new-mock-server',
+      name: 'Mock Server',
+      icon: 'server',
       action: createNewMockServer,
+      },
+      {
+        id: 'new-environment',
+        name: 'Environment',
+        icon: 'code',
+        action: createNewGlobalEnvironment,
       },
       {
       id: 'import',
@@ -887,6 +938,16 @@ const ProjectRoute: FC = () => {
           icon: 'plus',
           label: 'New Mock Server',
           run: createNewMockServer,
+        },
+      },
+      {
+        id: 'environment',
+        label: `Environments (${environmentsCount})`,
+        icon: 'code',
+        action: {
+          icon: 'plus',
+          label: 'New Environment',
+          run: createNewGlobalEnvironment,
         },
       },
   ];
@@ -1067,7 +1128,7 @@ const ProjectRoute: FC = () => {
                   }}
                 </GridList>
               )}
-              {!isLearningFeatureDismissed && learningFeature.active && (
+              {!isLearningFeatureDismissed && learningFeature?.active && (
                 <div className='flex flex-shrink-0 flex-col gap-2 p-[--padding-sm]'>
                   <div className='flex items-center justify-between gap-2'>
                     <Heading className='text-base'>
@@ -1231,7 +1292,7 @@ const ProjectRoute: FC = () => {
                     items={filesWithPresence}
                     onAction={id => {
                       // hack to workaround gridlist not have access to workspace scope
-                      const file = files.find(f => f.id === id);
+                      const file = finalFiles.find(f => f.id === id);
                       invariant(file, 'File not found');
                       if (file.scope === 'unsynced') {
                         if (activeProject?.remoteId && file.remoteId) {
@@ -1265,6 +1326,7 @@ const ProjectRoute: FC = () => {
                           createRequestCollection={createNewCollection}
                           createDesignDocument={createNewDocument}
                           createMockServer={createNewMockServer}
+                          createEnvironment={createNewGlobalEnvironment}
                           importFrom={() => setImportModalType('file')}
                           cloneFromGit={importFromGit}
                           isGitSyncEnabled={isGitSyncEnabled}
@@ -1304,9 +1366,17 @@ const ProjectRoute: FC = () => {
                               />
                             )}
                           </div>
-                          <Heading className="pt-4 text-lg font-bold line-clamp-2" title={item.name}>
-                            {item.name}
-                          </Heading>
+                          <TooltipTrigger>
+                            <Link onPress={e => e.continuePropagation()} className="pt-4 text-base font-bold line-clamp-4">
+                              {item.name}
+                            </Link>
+                            <Tooltip
+                              offset={8}
+                              className="border select-none text-sm max-w-xs border-solid border-[--hl-sm] shadow-lg bg-[--color-bg] text-[--color-font] px-4 py-2 rounded-md overflow-y-auto max-h-[85vh] focus:outline-none"
+                            >
+                              <span>{item.name}</span>
+                            </Tooltip>
+                          </TooltipTrigger>
                           <div className="flex-1 flex flex-col gap-2 justify-end text-sm text-[--hl]">
                             {item.version && (
                               <div className="flex-1 pt-2">
@@ -1333,6 +1403,7 @@ const ProjectRoute: FC = () => {
                               <div className="text-sm flex items-center gap-2 truncate">
                                 <Icon icon="clock" />
                                 <TimeFromNow
+                                  title={text => `Last updated ${text}, and created on ${new Date(item.created).toLocaleDateString()}`}
                                   timestamp={
                                     item.lastModifiedTimestamp
                                   }

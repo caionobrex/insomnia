@@ -91,7 +91,7 @@ export interface CodeEditorProps {
   noLint?: boolean;
   noMatchBrackets?: boolean;
   noStyleActiveLine?: boolean;
-  // used only for saving env editor state
+  // used only for saving env editor state, focusEvent doesn't work well
   onBlur?: (e: FocusEvent) => void;
   onChange?: (value: string) => void;
   onPaste?: (value: string) => string;
@@ -495,7 +495,7 @@ export const CodeEditor = memo(forwardRef<CodeEditorHandle, CodeEditorProps>(({
             tryToSetOption('lint', newValue);
           }
         } catch (err) {
-          console.log('Failed to set CodeMirror option', err.message);
+          console.log('[codemirror] Failed to set CodeMirror option', err.message);
         }
         onChange(doc.getValue() || '');
         setOriginalCode(doc.getValue() || '');
@@ -516,7 +516,7 @@ export const CodeEditor = memo(forwardRef<CodeEditorHandle, CodeEditorProps>(({
     try {
       codeMirror.current?.setOption(key, value);
     } catch (err) {
-      console.log('Failed to set CodeMirror option', err.message, { key, value });
+      console.log('[codemirror] Failed to set CodeMirror option', err.message, { key, value });
     }
   };
   useEffect(() => {

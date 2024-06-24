@@ -43,6 +43,7 @@ const UnitTest = lazy(() => import('./routes/unit-test'));
 const Debug = lazy(() => import('./routes/debug'));
 const Design = lazy(() => import('./routes/design'));
 const MockServer = lazy(() => import('./routes/mock-server'));
+const Environments = lazy(() => import('./routes/environments'));
 
 initializeSentry();
 initializeLogging();
@@ -59,7 +60,7 @@ try {
     window.localStorage.setItem('hasUserLoggedInBefore', skipOnboarding.toString());
   }
 } catch (e) {
-  console.log('Failed to parse session data', e);
+  console.log('[onboarding] Failed to parse session data', e);
 }
 
 async function renderApp() {
@@ -84,7 +85,7 @@ async function renderApp() {
         session.encPrivateKey
       );
     } catch (e) {
-      console.log('Failed to parse session data', e);
+      console.log('[init] Failed to parse session data', e);
     }
   }
 
@@ -536,6 +537,14 @@ async function renderApp() {
                                 ],
                               },
                               {
+                                path: 'environment',
+                                element: (
+                                  <Suspense fallback={<AppLoadingIndicator />}>
+                                    <Environments />
+                                  </Suspense>
+                                ),
+                              },
+                              {
                                 path: 'cacert',
                                 children: [
                                   {
@@ -624,6 +633,13 @@ async function renderApp() {
                                       (
                                         await import('./routes/actions')
                                       ).setActiveEnvironmentAction(...args),
+                                  },
+                                  {
+                                    path: 'set-active-global',
+                                    action: async (...args) =>
+                                      (
+                                        await import('./routes/actions')
+                                      ).setActiveGlobalEnvironmentAction(...args),
                                   },
                                 ],
                               },
@@ -988,6 +1004,14 @@ async function renderApp() {
                                   },
                                 ],
                               },
+                              {
+                                path: 'toggle-expand-all',
+                                action: async (...args) => (await import('./routes/actions')).toggleExpandAllRequestGroupsAction(...args),
+                              },
+                              {
+                                path: 'expand-all-for-request',
+                                action: async (...args) => (await import('./routes/actions')).expandAllForRequest(...args),
+                              },
                             ],
                           },
                           {
@@ -1096,7 +1120,6 @@ async function renderApp() {
     if (bothHaveValueButNotEqual) {
       // transforms /organization/:org_* to /organization/:org_id
       const routeWithoutUUID = nextRoute.replace(/_[a-f0-9]{32}/g, '_id');
-      // console.log('Tracking page view', { name: routeWithoutUUID });
       window.main.trackPageView({ name: routeWithoutUUID });
     }
 

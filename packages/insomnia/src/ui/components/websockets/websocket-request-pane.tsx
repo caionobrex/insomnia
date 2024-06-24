@@ -20,7 +20,7 @@ import { CodeEditor, CodeEditorHandle } from '../codemirror/code-editor';
 import { OneLineEditor } from '../codemirror/one-line-editor';
 import { WebSocketPreviewMode } from '../dropdowns/websocket-preview-mode';
 import { AuthWrapper } from '../editors/auth/auth-wrapper';
-import { RequestHeadersEditor } from '../editors/request-headers-editor';
+import { readOnlyWebsocketPairs, RequestHeadersEditor } from '../editors/request-headers-editor';
 import { RequestParametersEditor } from '../editors/request-parameters-editor';
 import { ErrorBoundary } from '../error-boundary';
 import { Icon } from '../icon';
@@ -227,14 +227,14 @@ export const WebSocketRequestPane: FC<Props> = ({ environment }) => {
   };
 
   // Path parameters are path segments that start with a colon (:)
-  const pathParameters = getCombinedPathParametersFromUrl(activeRequest.url, activeRequest.pathParameters);
+  const pathParameters = getCombinedPathParametersFromUrl(activeRequest.url, activeRequest.pathParameters || []);
 
   const onPathParameterChange = (pathParameters: RequestPathParameter[]) => {
     patchRequest(requestId, { pathParameters });
   };
 
   const parametersCount = pathParameters.length + activeRequest.parameters.filter(p => !p.disabled).length;
-  const headersCount = activeRequest.headers.filter(h => !h.disabled).length;
+  const headersCount = activeRequest.headers.filter(h => !h.disabled).length + readOnlyWebsocketPairs.length;
   const patchSettings = useSettingsPatcher();
   const upsertPayloadWithMode = async (mode: string) => {
     // @TODO: multiple payloads

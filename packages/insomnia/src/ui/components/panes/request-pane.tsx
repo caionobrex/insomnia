@@ -16,7 +16,7 @@ import { WorkspaceLoaderData } from '../../routes/workspace';
 import { OneLineEditor } from '../codemirror/one-line-editor';
 import { AuthWrapper } from '../editors/auth/auth-wrapper';
 import { BodyEditor } from '../editors/body/body-editor';
-import { RequestHeadersEditor } from '../editors/request-headers-editor';
+import { readOnlyHttpPairs, RequestHeadersEditor } from '../editors/request-headers-editor';
 import { RequestParametersEditor } from '../editors/request-parameters-editor';
 import { RequestScriptEditor } from '../editors/request-script-editor';
 import { ErrorBoundary } from '../error-boundary';
@@ -31,14 +31,12 @@ import { PlaceholderRequestPane } from './placeholder-request-pane';
 interface Props {
   environmentId: string;
   settings: Settings;
-  setLoading: (l: boolean) => void;
   onPaste: (text: string) => void;
 }
 
 export const RequestPane: FC<Props> = ({
   environmentId,
   settings,
-  setLoading,
   onPaste,
 }) => {
   const { activeRequest, activeRequestMeta } = useRouteLoaderData('request/:requestId') as RequestLoaderData;
@@ -82,14 +80,14 @@ export const RequestPane: FC<Props> = ({
   if (!activeRequest) {
     return <PlaceholderRequestPane />;
   }
-  const pathParameters = getCombinedPathParametersFromUrl(activeRequest.url, activeRequest.pathParameters);
+  const pathParameters = getCombinedPathParametersFromUrl(activeRequest.url, activeRequest.pathParameters || []);
 
   const onPathParameterChange = (pathParameters: RequestParameter[]) => {
     patchRequest(requestId, { pathParameters });
   };
 
   const parametersCount = pathParameters.length + activeRequest.parameters.filter(p => !p.disabled).length;
-  const headersCount = activeRequest.headers.filter(h => !h.disabled).length;
+  const headersCount = activeRequest.headers.filter(h => !h.disabled).length + readOnlyHttpPairs.length;
   const urlHasQueryParameters = activeRequest.url.indexOf('?') >= 0;
   const contentType =
     getContentTypeFromHeaders(activeRequest.headers) ||
@@ -104,7 +102,6 @@ export const RequestPane: FC<Props> = ({
             uniquenessKey={uniqueKey}
             handleAutocompleteUrls={() => queryAllWorkspaceUrls(workspaceId, models.request.type, requestId)}
             nunjucksPowerUserMode={settings.nunjucksPowerUserMode}
-            setLoading={setLoading}
             onPaste={onPaste}
           />
         </ErrorBoundary>
